@@ -19,68 +19,42 @@ module Rack
       end
 
       def get_session(env, sid)
-        session = @pool.get(sid) if sid
-        @mutex.lock if env['rack.multithread']
-        unless sid and session
-          env['rack.errors'].puts("Session '#{sid.inspect}' not found, initializing...") if $VERBOSE and not sid.nil?
-          session = {}
-          sid = generate_sid
-          ret = @pool.set sid, session
-          raise "Session collision on '#{sid.inspect}'" unless ret
+        with_lock(env, [ nil, {} ]) do
+          unless sid and session = @pool.get(sid)
+            env['rack.errors'].puts("Session '#{sid.inspect}' not found, initializing...") if $VERBOSE and not sid.nil?
+            session = {}
+            sid = generate_sid
+            ret = @pool.set sid, session
+            raise "Session collision on '#{sid.inspect}'" unless ret
+          end
+          [sid, session]
         end
-        session.instance_variable_set('@old', {}.merge(session))
-        return [sid, session]
-      rescue Errno::ECONNREFUSED
-        warn "#{self} is unable to find server."
-        warn $!.inspect
-        return [ nil, {} ]
-      ensure
-        @mutex.unlock if env['rack.multithread']
       end
 
       def set_session(env, session_id, new_session, options)
-        @mutex.lock if env['rack.multithread']
-        session = @pool.get(session_id) rescue {}
-        if options[:renew] or options[:drop]
-          @pool.del session_id
-          return false if options[:drop]
-          session_id = generate_sid
-          @pool.set session_id, 0
+        with_lock(env, false) do
+          @pool.set session_id, new_session, options
+          session_id
         end
-        old_session = new_session.instance_variable_get('@old') || {}
-        session = merge_sessions session_id, old_session, new_session, session
-        @pool.set session_id, session, options
-        return session_id
-      rescue Errno::ECONNREFUSED
-        warn "#{self} is unable to find server."
-        warn $!.inspect
-        return false
-      ensure
-        @mutex.unlock if env['rack.multithread']
       end
 
       def destroy_session(env, session_id, options)
-        options = { :renew => true }.update(options) unless options[:drop]
-        set_session(env, session_id, 0, options)
+        with_lock(env) do
+          @pool.del(session_id)
+          generate_sid unless options[:drop]
+        end
       end
 
       private
-        def merge_sessions(sid, old, new, cur=nil)
-          cur ||= {}
-          unless Hash === old and Hash === new
-            warn 'Bad old or new sessions provided.'
-            return cur
-          end
-
-          delete = old.keys - new.keys
-          warn "//@#{sid}: dropping #{delete*','}" if $DEBUG and not delete.empty?
-          delete.each{|k| cur.delete k }
-
-          update = new.keys.select{|k| new[k] != old[k] }
-          warn "//@#{sid}: updating #{update*','}" if $DEBUG and not update.empty?
-          update.each{|k| cur[k] = new[k] }
-
-          cur
+        def with_lock(env, default=nil)
+          @mutex.lock if env['rack.multithread']
+          yield
+        rescue Errno::ECONNREFUSED
+          warn "#{self} is unable to find server."
+          warn $!.inspect
+          default
+        ensure
+          @mutex.unlock if @mutex.locked?
         end
     end
   end

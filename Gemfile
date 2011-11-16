@@ -6,7 +6,7 @@ group :development do
   gem "git"
 end
 
-group :development, :test, :rails3 do
+group :development, :test, :rails3, :rails31 do
   gem "rack-cache"
   gem "merb", "1.1.0"
   gem "rspec", "1.3.0"
@@ -24,6 +24,12 @@ if ENV["REDIS_STORE_ENV"] == "rails3"
     gem "rack", "~> 1.2.1"
     gem "activesupport", "3.0.5"
     gem "actionpack", "3.0.5"
+  end
+elsif ENV["REDIS_STORE_ENV"] == "rails31"
+  group :rails31 do
+    gem "rack", "~> 1.3.0"
+    gem "activesupport", "3.1.1"
+    gem "actionpack", "3.1.1"
   end
 else
   group :test do
